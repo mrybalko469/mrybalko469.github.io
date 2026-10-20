@@ -118,9 +118,9 @@
 <section class="screen" id="q2" hidden>
   <h1 class="question">Почему ты туда идёшь?</h1>
   <div class="answers">
-    <button class="answer why" type="button">Чтоб плотно нахуяриться</button>
-    <button class="answer why" type="button">Чтоб расслабиться</button>
-    <button class="answer why" type="button">Потому что интересно</button>
+    <button class="answer" id="why-drink" type="button">Чтоб плотно нахуяриться</button>
+    <button class="answer why-other" type="button">Чтоб расслабиться</button>
+    <button class="answer why-other" type="button">Потому что интересно</button>
   </div>
 </section>
 
@@ -154,27 +154,108 @@
   document.addEventListener("pointerdown", unlock, { capture: true });
   document.addEventListener("touchend", unlock, { capture: true });
 
-  function show(id) {
-    ["q1", "dog", "q2", "final"].forEach((s) => { $(s).hidden = s !== id; });
-  }
-
-  // «Нет»: собака со звуком, через 3 секунды — снова вопрос
-  let backTimer;
-  $("q1-no").addEventListener("click", () => {
-    show("dog");
+  function playDog() {
     dogSound.muted = false;
     dogSound.currentTime = 0;
     const p = dogSound.play();
     if (p && p.catch) p.catch(() => {});
-    clearTimeout(backTimer);
-    backTimer = setTimeout(() => {
-      dogSound.pause();
-      show("q1");
-    }, 3000);
+  }
+
+  // Звуки викторины, синтезируются прямо в странице
+  let audio = null;
+  function ctx() {
+    if (!audio) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      audio = new AC();
+    }
+    if (audio.state === "suspended") audio.resume();
+    return audio;
+  }
+  function tone(ac, { freq, start, dur, type = "sine", gain = 0.25, filter }) {
+    const osc = ac.createOscillator();
+    const g = ac.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, start);
+    g.gain.setValueAtTime(0.0001, start);
+    g.gain.exponentialRampToValueAtTime(gain, start + 0.015);
+    g.gain.setValueAtTime(gain, start + dur * 0.7);
+    g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    let node = osc;
+    if (filter) {
+      const f = ac.createBiquadFilter();
+      f.type = "lowpass";
+      f.frequency.value = filter;
+      osc.connect(f);
+      node = f;
+    }
+    node.connect(g).connect(ac.destination);
+    osc.start(start);
+    osc.stop(start + dur + 0.05);
+  }
+  // правильный ответ: звонкое «дзынь-дзынь» вверх
+  function playRight() {
+    const ac = ctx(); if (!ac) return;
+    const t = ac.currentTime + 0.02;
+    [1046.5, 1318.5, 1568, 2093].forEach((f, i) => {
+      const last = i === 3;
+      tone(ac, { freq: f, start: t + i * 0.09, dur: last ? 0.7 : 0.16, type: "triangle", gain: 0.22 });
+      tone(ac, { freq: f * 2, start: t + i * 0.09, dur: last ? 0.5 : 0.12, type: "sine", gain: 0.06 });
+    });
+  }
+  // неправильный ответ: низкий гудок «э-э-э»
+  function playWrong() {
+    const ac = ctx(); if (!ac) return;
+    const t = ac.currentTime + 0.02;
+    tone(ac, { freq: 233, start: t, dur: 0.38, type: "sawtooth", gain: 0.22, filter: 1400 });
+    tone(ac, { freq: 175, start: t + 0.4, dur: 0.8, type: "sawtooth", gain: 0.22, filter: 1400 });
+    tone(ac, { freq: 116, start: t + 0.4, dur: 0.8, type: "square", gain: 0.08, filter: 600 });
+  }
+
+  function show(id) {
+    ["q1", "dog", "q2", "final"].forEach((s) => { $(s).hidden = s !== id; });
+  }
+
+  // пока идёт переход, повторные нажатия не считаются
+  let busy = false;
+  function step(fn, delay) {
+    if (busy) return;
+    busy = true;
+    setTimeout(() => { busy = false; fn(); }, delay);
+  }
+
+  // «Нет»: гудок, потом собака со звуком, через 3 секунды — снова вопрос
+  $("q1-no").addEventListener("click", () => {
+    if (busy) return;
+    playWrong();
+    step(() => {
+      show("dog");
+      playDog();
+      busy = true;
+      setTimeout(() => { dogSound.pause(); busy = false; show("q1"); }, 3000);
+    }, 1250);
   });
 
-  $("q1-yes").addEventListener("click", () => show("q2"));
-  document.querySelectorAll(".why").forEach((b) => b.addEventListener("click", () => show("final")));
+  // «Да»: правильный ответ, дальше второй вопрос
+  $("q1-yes").addEventListener("click", () => {
+    if (busy) return;
+    playRight();
+    step(() => show("q2"), 900);
+  });
+
+  // «Чтоб плотно нахуяриться»: правильный ответ, потом финал
+  $("why-drink").addEventListener("click", () => {
+    if (busy) return;
+    playRight();
+    step(() => show("final"), 900);
+  });
+
+  // остальные ответы: финал со звуком собаки
+  document.querySelectorAll(".why-other").forEach((b) => b.addEventListener("click", () => {
+    if (busy) return;
+    show("final");
+    playDog();
+  }));
 })();
 </script>
 </html>
