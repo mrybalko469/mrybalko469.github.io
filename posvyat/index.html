@@ -78,6 +78,8 @@
   .answer:hover { border-color: var(--ink); }
   .answer:active { transform: scale(0.96); }
   .answer:focus-visible { outline: 3px solid var(--ink); outline-offset: 4px; }
+  .answer.is-right { background: #2fd16b; border-color: #2fd16b; color: #000; }
+  .answer.is-wrong { background: #ff2b2b; border-color: #ff2b2b; }
 
   .meme { padding-block: max(24px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-bottom, 0px)); gap: 20px; justify-content: center; }
   .meme-text {
@@ -136,45 +138,20 @@
   // На iPhone звук не глушится бесшумным режимом (новые iOS)
   try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
 
-  // Звук собаки. Телефоны дают играть звук только после касания,
-  // поэтому при первом касании «разблокируем» его тихим запуском и паузой.
-  const dogSound = new Audio("sound.mp3");
-  dogSound.preload = "auto";
-  dogSound.setAttribute("playsinline", "");
-  let unlocked = false;
-  function unlock() {
-    if (unlocked) return;
-    unlocked = true;
-    dogSound.muted = true;
-    const p = dogSound.play();
-    const reset = () => { dogSound.pause(); dogSound.currentTime = 0; dogSound.muted = false; };
-    if (p && p.then) p.then(reset, () => { dogSound.muted = false; unlocked = false; });
-    else reset();
-  }
-  document.addEventListener("pointerdown", unlock, { capture: true });
-  document.addEventListener("touchend", unlock, { capture: true });
-
-  function playDog() {
-    dogSound.muted = false;
-    dogSound.currentTime = 0;
-    const p = dogSound.play();
-    if (p && p.catch) p.catch(() => {});
-  }
-
-  // Звуки викторины, синтезируются прямо в странице
-  let audio = null;
+  // --- Звуки викторины (синтез прямо в браузере) ---
+  let ac = null;
   function ctx() {
-    if (!audio) {
+    if (!ac) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
-      audio = new AC();
+      ac = new AC();
     }
-    if (audio.state === "suspended") audio.resume();
-    return audio;
+    if (ac.state === "suspended") ac.resume();
+    return ac;
   }
-  function tone(ac, { freq, start, dur, type = "sine", gain = 0.25, filter }) {
-    const osc = ac.createOscillator();
-    const g = ac.createGain();
+  function tone(a, { freq, start, dur, type = "sine", gain = 0.25, filter }) {
+    const osc = a.createOscillator();
+    const g = a.createGain();
     osc.type = type;
     osc.frequency.setValueAtTime(freq, start);
     g.gain.setValueAtTime(0.0001, start);
@@ -183,78 +160,116 @@
     g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
     let node = osc;
     if (filter) {
-      const f = ac.createBiquadFilter();
+      const f = a.createBiquadFilter();
       f.type = "lowpass";
       f.frequency.value = filter;
       osc.connect(f);
       node = f;
     }
-    node.connect(g).connect(ac.destination);
+    node.connect(g).connect(a.destination);
     osc.start(start);
     osc.stop(start + dur + 0.05);
   }
-  // правильный ответ: звонкое «дзынь-дзынь» вверх
+  // правильный ответ: «дзынь-дзынь» вверх
   function playRight() {
-    const ac = ctx(); if (!ac) return;
-    const t = ac.currentTime + 0.02;
+    const a = ctx(); if (!a) return;
+    const t = a.currentTime + 0.02;
     [1046.5, 1318.5, 1568, 2093].forEach((f, i) => {
       const last = i === 3;
-      tone(ac, { freq: f, start: t + i * 0.09, dur: last ? 0.7 : 0.16, type: "triangle", gain: 0.22 });
-      tone(ac, { freq: f * 2, start: t + i * 0.09, dur: last ? 0.5 : 0.12, type: "sine", gain: 0.06 });
+      tone(a, { freq: f, start: t + i * 0.09, dur: last ? 0.7 : 0.16, type: "triangle", gain: 0.22 });
+      tone(a, { freq: f * 2, start: t + i * 0.09, dur: last ? 0.5 : 0.12, type: "sine", gain: 0.06 });
     });
   }
-  // неправильный ответ: низкий гудок «э-э-э»
+  // неправильный ответ: гудок «э-э-э», длится ~1,2 с
+  const WRONG_MS = 1250;
   function playWrong() {
-    const ac = ctx(); if (!ac) return;
-    const t = ac.currentTime + 0.02;
-    tone(ac, { freq: 233, start: t, dur: 0.38, type: "sawtooth", gain: 0.22, filter: 1400 });
-    tone(ac, { freq: 175, start: t + 0.4, dur: 0.8, type: "sawtooth", gain: 0.22, filter: 1400 });
-    tone(ac, { freq: 116, start: t + 0.4, dur: 0.8, type: "square", gain: 0.08, filter: 600 });
+    const a = ctx(); if (!a) return;
+    const t = a.currentTime + 0.02;
+    tone(a, { freq: 233, start: t, dur: 0.38, type: "sawtooth", gain: 0.22, filter: 1400 });
+    tone(a, { freq: 175, start: t + 0.4, dur: 0.8, type: "sawtooth", gain: 0.22, filter: 1400 });
+    tone(a, { freq: 116, start: t + 0.4, dur: 0.8, type: "square", gain: 0.08, filter: 600 });
+  }
+
+  // --- Наложенные звуки из файлов ---
+  // Телефоны дают играть звук только после касания, поэтому при первом касании
+  // «разблокируем» каждый звук тихим запуском и паузой.
+  function makeSound(src) {
+    const s = new Audio(src);
+    s.preload = "auto";
+    s.setAttribute("playsinline", "");
+    return s;
+  }
+  const dogSound = makeSound("sound.mp3");
+  const dzhiganSound = makeSound("dzhigan.mp3");
+  const sounds = [dogSound, dzhiganSound];
+  let unlocked = false;
+  function unlock() {
+    ctx();
+    if (unlocked) return;
+    unlocked = true;
+    sounds.forEach((s) => {
+      s.muted = true;
+      const p = s.play();
+      const reset = () => { s.pause(); s.currentTime = 0; s.muted = false; };
+      if (p && p.then) p.then(reset, () => { s.muted = false; unlocked = false; });
+      else reset();
+    });
+  }
+  document.addEventListener("pointerdown", unlock, { capture: true });
+  document.addEventListener("touchend", unlock, { capture: true });
+
+  function play(s) {
+    sounds.forEach((o) => { if (o !== s) o.pause(); });
+    s.muted = false;
+    s.currentTime = 0;
+    const p = s.play();
+    if (p && p.catch) p.catch(() => {});
   }
 
   function show(id) {
     ["q1", "dog", "q2", "final"].forEach((s) => { $(s).hidden = s !== id; });
   }
 
-  // пока идёт переход, повторные нажатия не считаются
-  let busy = false;
-  function step(fn, delay) {
-    if (busy) return;
-    busy = true;
-    setTimeout(() => { busy = false; fn(); }, delay);
-  }
+  let busy = false;   // пока идёт звук и переход, повторные нажатия игнорируются
 
   // «Нет»: гудок, потом собака со звуком, через 3 секунды — снова вопрос
-  $("q1-no").addEventListener("click", () => {
+  $("q1-no").addEventListener("click", (e) => {
     if (busy) return;
+    busy = true;
+    const btn = e.currentTarget;
     playWrong();
-    step(() => {
+    btn.classList.add("is-wrong");
+    setTimeout(() => {
+      btn.classList.remove("is-wrong");
       show("dog");
-      playDog();
+      play(dogSound);
+      setTimeout(() => {
+        dogSound.pause();
+        show("q1");
+        busy = false;
+      }, 3000);
+    }, WRONG_MS);
+  });
+
+  // «Да»: звук правильного ответа, потом следующий вопрос
+  function right(next) {
+    return (e) => {
+      if (busy) return;
       busy = true;
-      setTimeout(() => { dogSound.pause(); busy = false; show("q1"); }, 3000);
-    }, 1250);
-  });
+      const btn = e.currentTarget;
+      playRight();
+      btn.classList.add("is-right");
+      setTimeout(() => { btn.classList.remove("is-right"); show(next); busy = false; }, 900);
+    };
+  }
+  $("q1-yes").addEventListener("click", right("q2"));
+  $("why-drink").addEventListener("click", right("final"));
 
-  // «Да»: правильный ответ, дальше второй вопрос
-  $("q1-yes").addEventListener("click", () => {
-    if (busy) return;
-    playRight();
-    step(() => show("q2"), 900);
-  });
-
-  // «Чтоб плотно нахуяриться»: правильный ответ, потом финал
-  $("why-drink").addEventListener("click", () => {
-    if (busy) return;
-    playRight();
-    step(() => show("final"), 900);
-  });
-
-  // остальные ответы: финал со звуком собаки
+  // остальные ответы: звук Джигана и тот же финальный экран
   document.querySelectorAll(".why-other").forEach((b) => b.addEventListener("click", () => {
     if (busy) return;
+    play(dzhiganSound);
     show("final");
-    playDog();
   }));
 })();
 </script>
