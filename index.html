@@ -21,6 +21,7 @@
   }
   [hidden] { display: none !important; }
   html, body { height: 100%; margin: 0; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body {
     background: var(--bg);
     color: var(--ink);
@@ -30,20 +31,23 @@
   .screen {
     box-sizing: border-box;
     height: 100%;
+    overflow-y: auto;          /* на очень маленьком экране можно прокрутить, ничего не обрезается */
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding-block: 18vh 24px;
+    padding-block: clamp(32px, 14vh, 160px) 24px;
     padding-left: max(16px, env(safe-area-inset-left, 0px));
     padding-right: max(16px, env(safe-area-inset-right, 0px));
-    gap: 48px;
+    gap: clamp(28px, 6vh, 48px);
     text-align: center;
   }
   .question {
     margin: 0;
-    font-size: clamp(30px, 7vw, 64px);
+    font-size: clamp(28px, 7vw, 64px);
     font-weight: 700;
+    line-height: 1.15;
     text-wrap: balance;
+    overflow-wrap: break-word;
     max-width: 18ch;
   }
   .answers {
@@ -65,7 +69,10 @@
     border: 2px solid var(--btn-edge);
     border-radius: 14px;
     padding: 0.8em 0.6em;
+    line-height: 1.2;
     cursor: pointer;
+    touch-action: manipulation;              /* без двойного тапа-зума на телефоне */
+    -webkit-tap-highlight-color: transparent;
     transition: transform 0.12s ease, background 0.2s ease, border-color 0.2s ease;
   }
   .answer:hover { border-color: var(--ink); }
@@ -77,23 +84,31 @@
   .answers-3 { flex-wrap: wrap; max-width: 860px; }
   .answers-3 .answer { flex: 1 1 200px; }
 
-  .final { padding-block: 6vh 24px; gap: 24px; justify-content: center; }
+  .final { padding-block: max(24px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-bottom, 0px)); gap: 20px; justify-content: center; }
   .final-text {
     margin: 0;
-    font-size: clamp(24px, 5.5vw, 48px);
+    flex: none;
+    font-size: clamp(22px, 6vw, 48px);
     font-weight: 700;
     line-height: 1.25;
     text-wrap: balance;
+    overflow-wrap: break-word;
     max-width: 22ch;
   }
   .final-photo {
     display: block;
-    max-width: min(100%, 520px);
-    max-height: 55vh;
-    min-height: 0;
-    object-fit: contain;
+    flex: none;
+    width: min(100%, 520px, 55vh);
+    width: min(100%, 520px, 55dvh);
+    height: auto;
+    aspect-ratio: 946 / 930;
+    object-fit: cover;
     border-radius: 16px;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
+  .final-hint { margin: 0; flex: none; color: var(--muted); font-size: 14px; }
 
   .flash {
     position: fixed;
@@ -108,11 +123,12 @@
   }
   .flash-text {
     margin: 0;
-    font-size: clamp(44px, 13vw, 150px);
+    font-size: clamp(36px, 11vw, 150px);
     font-weight: 900;
-    line-height: 1;
+    line-height: 1.05;
     text-transform: uppercase;
     text-wrap: balance;
+    overflow-wrap: break-word;
   }
   #wrong .flash-text { color: var(--wrong); animation: shake 0.5s ease; }
   @keyframes shake {
@@ -155,7 +171,8 @@
 
 <section class="screen final" id="final" hidden>
   <p class="final-text">Не скучай, Ульянка, скоро увидимся.<br>Я тебя очень люблю</p>
-  <img class="final-photo" src="dog.jpg" alt="Собака с бабочкой на носу">
+  <img class="final-photo" id="final-photo" src="dog.jpg" alt="Собака с бабочкой на носу">
+  <p class="final-hint">Нажми на фото, чтобы послушать ещё раз</p>
 </section>
 
 <div class="flash" id="wrong" hidden><p class="flash-text">Неправильный ответ</p></div>
@@ -217,8 +234,38 @@
     tone(ac, { freq: 116, start: t + 0.4, dur: 0.8, type: "square", gain: 0.08, filter: 600 });
   }
 
+  // На iPhone звуки страницы не глушатся переключателем «бесшумный режим»
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+
+  // Звук финального экрана. Телефоны разрешают звук только после нажатия,
+  // поэтому при первом касании «разблокируем» его тихим запуском и паузой.
+  const finalSound = new Audio("sound.mp3");
+  finalSound.preload = "auto";
+  finalSound.setAttribute("playsinline", "");
+  let unlocked = false;
+  function unlockFinalSound() {
+    if (unlocked) return;
+    unlocked = true;
+    finalSound.muted = true;
+    const p = finalSound.play();
+    const reset = () => { finalSound.pause(); finalSound.currentTime = 0; finalSound.muted = false; };
+    if (p && p.then) p.then(reset, () => { finalSound.muted = false; unlocked = false; });
+    else reset();
+  }
+  document.addEventListener("pointerdown", unlockFinalSound, { capture: true });
+  document.addEventListener("touchend", unlockFinalSound, { capture: true });
+
+  function playFinalSound() {
+    finalSound.muted = false;
+    finalSound.currentTime = 0;
+    const p = finalSound.play();
+    if (p && p.catch) p.catch(() => {});
+  }
+  $("final-photo").addEventListener("click", playFinalSound);
+
   function show(id) {
     ["q1", "q2", "q3", "final"].forEach((s) => { $(s).hidden = s !== id; });
+    if (id === "final") playFinalSound();
   }
 
   // правильный ответ: звук, кнопка зелёная, дальше следующий экран
