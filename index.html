@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ты любишь меня?</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* Один экран, как в телевикторине: вопрос сверху по центру, ниже два ответа (слева и справа).
+     Неправильный ответ — красная вспышка на весь экран, правильный — зелёная. */
+  :root {
+    --bg: #000;
+    --ink: #fff;
+    --muted: #9a9aa6;
+    --btn: #15151c;
+    --btn-edge: #3a3a48;
+    --right: #2fd16b;
+    --wrong: #ff2b2b;
+    --font: Arial, Helvetica, system-ui, sans-serif;
+    color-scheme: dark;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    overflow: hidden;
+  }
+  .screen {
+    box-sizing: border-box;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-block: 18vh 24px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    gap: 48px;
+    text-align: center;
+  }
+  .question {
+    margin: 0;
+    font-size: clamp(30px, 7vw, 64px);
+    font-weight: 700;
+    text-wrap: balance;
+    max-width: 18ch;
+  }
+  .answers {
+    display: flex;
+    gap: clamp(16px, 6vw, 64px);
+    width: 100%;
+    max-width: 640px;
+    justify-content: center;
+  }
+  .answer {
+    flex: 1 1 0;
+    max-width: 260px;
+    min-width: 0;
+    font-family: var(--font);
+    font-size: clamp(20px, 5vw, 30px);
+    font-weight: 700;
+    color: var(--ink);
+    background: var(--btn);
+    border: 2px solid var(--btn-edge);
+    border-radius: 14px;
+    padding: 0.8em 0.6em;
+    cursor: pointer;
+    transition: transform 0.12s ease, background 0.2s ease, border-color 0.2s ease;
+  }
+  .answer:hover { border-color: var(--ink); }
+  .answer:active { transform: scale(0.96); }
+  .answer:focus-visible { outline: 3px solid var(--ink); outline-offset: 4px; }
+  .answer.is-right { background: var(--right); border-color: var(--right); color: #000; }
+  .answer.is-wrong { background: var(--wrong); border-color: var(--wrong); }
+  /* три ответа: в ряд на широком экране, столбиком на телефоне */
+  .answers-3 { flex-wrap: wrap; max-width: 860px; }
+  .answers-3 .answer { flex: 1 1 200px; }
+
+  .final { padding-block: 6vh 24px; gap: 24px; justify-content: center; }
+  .final-text {
+    margin: 0;
+    font-size: clamp(24px, 5.5vw, 48px);
+    font-weight: 700;
+    line-height: 1.25;
+    text-wrap: balance;
+    max-width: 22ch;
+  }
+  .final-photo {
+    display: block;
+    max-width: min(100%, 520px);
+    max-height: 55vh;
+    min-height: 0;
+    object-fit: contain;
+    border-radius: 16px;
+  }
+
+  .flash {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    display: grid;
+    place-items: center;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    background: var(--bg);
+    text-align: center;
+  }
+  .flash-text {
+    margin: 0;
+    font-size: clamp(44px, 13vw, 150px);
+    font-weight: 900;
+    line-height: 1;
+    text-transform: uppercase;
+    text-wrap: balance;
+  }
+  #wrong .flash-text { color: var(--wrong); animation: shake 0.5s ease; }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-18px); }
+    40% { transform: translateX(16px); }
+    60% { transform: translateX(-10px); }
+    80% { transform: translateX(6px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #wrong .flash-text { animation: none; }
+  }
+</style>
+
+<section class="screen" id="q1">
+  <h1 class="question">Ты любишь меня?</h1>
+  <div class="answers">
+    <button class="answer" id="q1-no" type="button">Нет</button>
+    <button class="answer" id="q1-yes" type="button">Да</button>
+  </div>
+</section>
+
+<section class="screen" id="q2" hidden>
+  <h1 class="question">Ты скучаешь по мне?</h1>
+  <div class="answers answers-3">
+    <button class="answer" id="q2-no" type="button">Нет</button>
+    <button class="answer" id="q2-yes" type="button">Да</button>
+    <button class="answer" id="q2-sure" type="button">Конечно</button>
+  </div>
+</section>
+
+<section class="screen" id="q3" hidden>
+  <h1 class="question">Когда ты хочешь со мной увидеться?</h1>
+  <div class="answers answers-3">
+    <button class="answer" id="q3-now" type="button">Сейчас</button>
+    <button class="answer" id="q3-soon" type="button">Как можно скорее</button>
+    <button class="answer" id="q3-never" type="button">Никогда</button>
+  </div>
+</section>
+
+<section class="screen final" id="final" hidden>
+  <p class="final-text">Не скучай, Ульянка, скоро увидимся.<br>Я тебя очень люблю</p>
+  <img class="final-photo" src="dog.jpg" alt="Собака с бабочкой на носу">
+</section>
+
+<div class="flash" id="wrong" hidden><p class="flash-text">Неправильный ответ</p></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  let audio = null;
+
+  function ctx() {
+    if (!audio) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      audio = new AC();
+    }
+    if (audio.state === "suspended") audio.resume();
+    return audio;
+  }
+
+  function tone(ac, { freq, start, dur, type = "sine", gain = 0.25, filter }) {
+    const osc = ac.createOscillator();
+    const g = ac.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, start);
+    g.gain.setValueAtTime(0.0001, start);
+    g.gain.exponentialRampToValueAtTime(gain, start + 0.015);
+    g.gain.setValueAtTime(gain, start + dur * 0.7);
+    g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    let node = osc;
+    if (filter) {
+      const f = ac.createBiquadFilter();
+      f.type = "lowpass";
+      f.frequency.value = filter;
+      osc.connect(f);
+      node = f;
+    }
+    node.connect(g).connect(ac.destination);
+    osc.start(start);
+    osc.stop(start + dur + 0.05);
+  }
+
+  // Правильный ответ: звонкое «дзынь-дзынь» вверх, как в викторине
+  function playRight() {
+    const ac = ctx(); if (!ac) return;
+    const t = ac.currentTime + 0.02;
+    [1046.5, 1318.5, 1568, 2093].forEach((f, i) => {
+      const last = i === 3;
+      tone(ac, { freq: f, start: t + i * 0.09, dur: last ? 0.7 : 0.16, type: "triangle", gain: 0.22 });
+      tone(ac, { freq: f * 2, start: t + i * 0.09, dur: last ? 0.5 : 0.12, type: "sine", gain: 0.06 });
+    });
+  }
+
+  // Неправильный ответ: низкий гудок «э-э-э», два тона вниз
+  function playWrong() {
+    const ac = ctx(); if (!ac) return;
+    const t = ac.currentTime + 0.02;
+    tone(ac, { freq: 233, start: t, dur: 0.38, type: "sawtooth", gain: 0.22, filter: 1400 });
+    tone(ac, { freq: 175, start: t + 0.4, dur: 0.8, type: "sawtooth", gain: 0.22, filter: 1400 });
+    tone(ac, { freq: 116, start: t + 0.4, dur: 0.8, type: "square", gain: 0.08, filter: 600 });
+  }
+
+  function show(id) {
+    ["q1", "q2", "q3", "final"].forEach((s) => { $(s).hidden = s !== id; });
+  }
+
+  // правильный ответ: звук, кнопка зелёная, дальше следующий экран
+  function right(next) {
+    return (e) => {
+      const btn = e.currentTarget;
+      playRight();
+      btn.classList.add("is-right");
+      setTimeout(() => { btn.classList.remove("is-right"); show(next); }, 900);
+    };
+  }
+
+  // неправильный ответ: гудок, «Неправильный ответ» на весь экран, потом тот же вопрос снова
+  let wrongTimer;
+  function wrong() {
+    playWrong();
+    $("wrong").hidden = false;
+    clearTimeout(wrongTimer);
+    wrongTimer = setTimeout(() => { $("wrong").hidden = true; }, 2500);
+  }
+  $("wrong").addEventListener("click", () => { clearTimeout(wrongTimer); $("wrong").hidden = true; });
+
+  $("q1-no").addEventListener("click", wrong);
+  $("q1-yes").addEventListener("click", right("q2"));
+
+  $("q2-no").addEventListener("click", wrong);
+  $("q2-yes").addEventListener("click", right("q3"));
+  $("q2-sure").addEventListener("click", right("q3"));
+
+  $("q3-now").addEventListener("click", right("final"));
+  $("q3-soon").addEventListener("click", right("final"));
+  $("q3-never").addEventListener("click", wrong);
+})();
+</script>
+</html>
