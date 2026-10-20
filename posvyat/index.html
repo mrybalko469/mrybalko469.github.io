@@ -81,6 +81,17 @@
   .answer.is-right { background: #2fd16b; border-color: #2fd16b; color: #000; }
   .answer.is-wrong { background: #ff2b2b; border-color: #ff2b2b; }
 
+  #tint {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    pointer-events: none;
+    background: #ff1a1a;
+    opacity: 0;
+  }
+  #tint.on { animation: tint 0.7s ease-out; }
+  @keyframes tint { 0% { opacity: 0.55; } 100% { opacity: 0; } }
+
   .meme { padding-block: max(24px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-bottom, 0px)); gap: 20px; justify-content: center; }
   .meme-text {
     margin: 0;
@@ -130,6 +141,8 @@
   <p class="meme-text">Ты идёшь плотно нахуяриться, а я вот нет</p>
   <img class="meme-photo" src="yufu.jpg" alt="Здание в Ростове с надписью «В ЮФУ охуенно»">
 </section>
+
+<div id="tint" hidden></div>
 
 <script>
 (() => {
@@ -190,86 +203,101 @@
     tone(a, { freq: 116, start: t + 0.4, dur: 0.8, type: "square", gain: 0.08, filter: 600 });
   }
 
-  // --- Наложенные звуки из файлов ---
-  // Телефоны дают играть звук только после касания, поэтому при первом касании
-  // «разблокируем» каждый звук тихим запуском и паузой.
-  function makeSound(src) {
-    const s = new Audio(src);
-    s.preload = "auto";
-    s.setAttribute("playsinline", "");
-    return s;
+  // --- Звуки из файлов ---
+  // Файлы заранее загружаются и декодируются, а играют через тот же AudioContext,
+  // что и звуки викторины: он включается первым касанием и дальше играет без ограничений.
+  const FILES = { dog: "sound.mp3", dzhigan: "dzhigan.mp3", mell: "mellstroy.mp3" };
+  const buffers = {};
+  const loading = {};
+  function load(name) {
+    if (!loading[name]) {
+      const a = ctx();
+      loading[name] = fetch(FILES[name])
+        .then((r) => r.arrayBuffer())
+        .then((data) => new Promise((ok, fail) => a.decodeAudioData(data, ok, fail)))
+        .then((buf) => { buffers[name] = buf; return buf; })
+        .catch(() => null);
+    }
+    return loading[name];
   }
-  const dogSound = makeSound("sound.mp3");
-  const dzhiganSound = makeSound("dzhigan.mp3");
-  const sounds = [dogSound, dzhiganSound];
-  let unlocked = false;
-  function unlock() {
-    ctx();
-    if (unlocked) return;
-    unlocked = true;
-    sounds.forEach((s) => {
-      s.muted = true;
-      const p = s.play();
-      const reset = () => { s.pause(); s.currentTime = 0; s.muted = false; };
-      if (p && p.then) p.then(reset, () => { s.muted = false; unlocked = false; });
-      else reset();
-    });
-  }
-  document.addEventListener("pointerdown", unlock, { capture: true });
-  document.addEventListener("touchend", unlock, { capture: true });
+  Object.keys(FILES).forEach(load);
 
-  function play(s) {
-    sounds.forEach((o) => { if (o !== s) o.pause(); });
-    s.muted = false;
-    s.currentTime = 0;
-    const p = s.play();
-    if (p && p.catch) p.catch(() => {});
+  let current = null;
+  function stopFile() {
+    if (current) { try { current.stop(); } catch (e) {} current = null; }
   }
+  async function playFile(name) {
+    const a = ctx(); if (!a) return;
+    stopFile();
+    const buf = buffers[name] || await load(name);
+    if (!buf) return;
+    const src = a.createBufferSource();
+    src.buffer = buf;
+    src.connect(a.destination);
+    src.start();
+    current = src;
+  }
+
+  // первое касание включает звук на телефонах
+  const wake = () => ctx();
+  document.addEventListener("pointerdown", wake, { capture: true });
+  document.addEventListener("touchend", wake, { capture: true });
 
   function show(id) {
     ["q1", "dog", "q2", "final"].forEach((s) => { $(s).hidden = s !== id; });
   }
 
+  function flashRed() {
+    const t = $("tint");
+    t.hidden = false;
+    t.classList.remove("on");
+    void t.offsetWidth;          // перезапуск анимации
+    t.classList.add("on");
+    setTimeout(() => { t.hidden = true; }, 700);
+  }
+
   let busy = false;   // пока идёт звук и переход, повторные нажатия игнорируются
 
-  // «Нет»: гудок, потом собака со звуком, через 3 секунды — снова вопрос
-  $("q1-no").addEventListener("click", (e) => {
+  // «Нет»: экран краснеет, гудок, сразу собака со своим звуком, через 3 секунды — снова вопрос
+  $("q1-no").addEventListener("click", () => {
     if (busy) return;
     busy = true;
-    const btn = e.currentTarget;
+    flashRed();
     playWrong();
-    btn.classList.add("is-wrong");
+    show("dog");
+    playFile("dog");
     setTimeout(() => {
-      btn.classList.remove("is-wrong");
-      show("dog");
-      play(dogSound);
-      setTimeout(() => {
-        dogSound.pause();
-        show("q1");
-        busy = false;
-      }, 3000);
-    }, WRONG_MS);
+      stopFile();
+      show("q1");
+      busy = false;
+    }, 3000);
   });
 
-  // «Да»: звук правильного ответа, потом следующий вопрос
-  function right(next) {
+  // правильный ответ: «дзынь», зелёная кнопка, потом следующий экран (и, если есть, звук из файла)
+  function right(next, file) {
     return (e) => {
       if (busy) return;
       busy = true;
       const btn = e.currentTarget;
       playRight();
       btn.classList.add("is-right");
-      setTimeout(() => { btn.classList.remove("is-right"); show(next); busy = false; }, 900);
+      setTimeout(() => {
+        btn.classList.remove("is-right");
+        show(next);
+        if (file) playFile(file);
+        busy = false;
+      }, 900);
     };
   }
   $("q1-yes").addEventListener("click", right("q2"));
-  $("why-drink").addEventListener("click", right("final"));
+  // «Чтоб плотно нахуяриться»: правильный ответ, потом Меллстрой
+  $("why-drink").addEventListener("click", right("final", "mell"));
 
-  // остальные ответы: звук Джигана и тот же финальный экран
+  // остальные ответы: Джиган и тот же финальный экран
   document.querySelectorAll(".why-other").forEach((b) => b.addEventListener("click", () => {
     if (busy) return;
-    play(dzhiganSound);
     show("final");
+    playFile("dzhigan");
   }));
 })();
 </script>
